@@ -1,0 +1,22 @@
+[project]
+name = "llm-chat"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.11.16",
+    "fastapi>=0.115.12",
+    "langchain>=0.3.23",
+    "langchain-openai>=0.3.14",
+    "openai>=1.75.0",
+    "pydantic>=2.11.3",
+    "pydantic-settings>=2.9.1",
+    "uvicorn>=0.34.1",
+]
+
+[dependency-groups]
+dev = [
+    "gradio>=5.25.2",
+    "ipykernel>=6.29.5",
+]

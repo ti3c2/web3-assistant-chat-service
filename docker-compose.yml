@@ -1,0 +1,26 @@
+services:
+  api:
+    container_name: web3-assistant-chat
+    build: .
+    command:
+      [
+        "uvicorn",
+        "src.endpoints:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "4400",
+        "--reload",
+      ]
+    environment:
+      - OPENAI_API_KEY=$OPENAI_API_KEY
+    ports:
+      - "4400:4400"
+    networks:
+      - web3-assistant-network
+    volumes:
+      - ./src:/app/src
+
+networks:
+  web3-assistant-network:
+    external: true
