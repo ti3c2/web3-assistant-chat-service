@@ -1,158 +1,104 @@
+import asyncio
+import json
 import logging
-from typing import Any, Dict, List, Optional
+import os
+from typing import Dict, List
 
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain.memory import ConversationBufferMemory
-from langchain.schema import AIMessage, HumanMessage
-from langchain.tools import BaseTool
-from langchain_core.callbacks import AsyncCallbackManagerForToolRun
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai.chat_models import ChatOpenAI
-from pydantic import SecretStr
+from agents import (
+    Agent,
+    AsyncOpenAI,
+    ModelSettings,
+    OpenAIChatCompletionsModel,
+    RunContextWrapper,
+    Runner,
+    function_tool,
+    trace,
+)
+from typing_extensions import Any, TypedDict
 
-from .chroma_client import ChromaClient
+from .chroma_client import ChromaClient, SearchResult, SearchResults
 from .settings import settings
 
 logger = logging.getLogger(__name__)
 
-
-class SemanticSearchTool(BaseTool):
-    name: str = "semantic_search"
-    description: str = "Search through knowledge base"
-
-    def __init__(self, query_model: str = "gpt-4.1-nano"):
-        super().__init__()
-        self._chroma_client = ChromaClient(settings.chroma_base_url)
-        self._query_model = query_model
-
-    async def _query2chroma(self, query: str) -> str:
-        prompt = "Provide the most likely answer to the following question: {query}"
-        client = ChatOpenAI(
-            api_key=settings.openai_api_key, model=self._query_model, temperature=0.0
-        ).with_structured_output({"answer": str})
-        response = await client.ainvoke(prompt.format(query=query))
-        out = response["answer"]
-        logger.info(
-            "Transformed `{}` to `{}` for query to chroma db".format(query, out)
-        )
-        return out
-
-    async def _arun(self, query: str) -> str:
-        query = await self._query2chroma(query)
-        results = await self._chroma_client.search(query)
-        formatted_results = []
-        for r in results.results:
-            formatted_results.append(
-                f"Document: {r.document}\n" f"From: {r.channel} at {r.datetime}\n"
-            )
-        logger.info("Search results: {}".format("\n".join(formatted_results)))
-        return "\n".join(formatted_results)
-
-    def _run(
-        self,
-        run_manager: Optional[AsyncCallbackManagerForToolRun] = None,
-    ) -> str:
-        raise NotImplementedError("AsyncOnly does not support sync")
+chroma_client = ChromaClient()
 
 
-class ChatbotAgent:
-    system_message = """\
-You are a helpful web3 assistant that can answer questions about crypto, \
-dexes and various activities based on your internal knowledge base.
-"""
+@function_tool
+async def full_text_search(tokens: List[str]) -> Dict[str, Any]:
+    """Search across knowledge base to find documents with exact matches to the user's assets represented by tokens.
 
-    def __init__(
-        self,
-        openai_api_key: SecretStr = settings.openai_api_key,
-        model_name: str = settings.openai_model_name,
-        temperature: float = settings.openai_temperature,
-    ):
-        self.llm = ChatOpenAI(
-            api_key=openai_api_key,
-            model=model_name,
-            temperature=temperature,
-        )
-        self.memory = ConversationBufferMemory(
-            memory_key="chat_history", return_messages=True
-        )
-        self.tools = [SemanticSearchTool()]
-        self.prompt = ChatPromptTemplate.from_messages(
-            [
-                ("system", "You are a helpful assistant. Respond only in Spanish."),
-                ("human", "{input}"),
-                # Placeholders fill up a **list** of messages
-                ("placeholder", "{agent_scratchpad}"),
-            ]
-        )
-        self.agent = create_tool_calling_agent(
-            self.llm,
-            self.tools,
-            self.prompt,
-        )
-        self.agent_executor = AgentExecutor.from_agent_and_tools(
-            agent=self.agent,
-            tools=self.tools,
-            memory=self.memory,
-            verbose=True,
-            handle_parsing_errors=True,
-        )
-
-    async def process_message(self, message: str) -> str:
-        response = await self.agent_executor.ainvoke(dict(input=message))
-        out = response["output"]
-        return out
-
-
-class TokenChatbotAgent:
-    system_message = """\
-You are a helpful web3 assistant that can advertise people activities based on their tokens, \
-dexes and various activities based on your internal knowledge base.
-
-Reference the posts with the following format:
-```
-<Post url>
-<Relevant information>
-<Exact quote>
-```
-"""
-    user_message = """\
-Here are the user's tokens: {tokens}
-Here are the available posts:\n{input}
+    Args:
+        tokens: List of tokens to search for extracted from the user's message. Use all tokens in one query to leverage the bulk api.
     """
+    results = await chroma_client.search(tokens=tokens)
+    logger.debug( "Full text search results for tokens {}: {}".format(tokens, json.dumps(results.model_dump(), indent=2, ensure_ascii=False))) # fmt: skip
+    return results.model_dump()
 
-    def __init__(
-        self,
-        openai_api_key: SecretStr = settings.openai_api_key,
-        model_name: str = settings.openai_model_name,
-        temperature: float = settings.openai_temperature,
-    ):
-        self.llm = ChatOpenAI(
-            api_key=openai_api_key,
-            model=model_name,
-            temperature=temperature,
-        )
-        self.prompt = ChatPromptTemplate.from_messages(
-            [
-                ("system", self.system_message),
-                ("human", self.user_message),
-            ]
-        )
-        self.chain = self.prompt | self.llm | StrOutputParser()
-        self.chroma_client = ChromaClient()
 
-    async def ainvoke(self, input: Dict[str, Any]) -> str:
-        tokens = input["tokens"]
-        logger.debug(f"Querying vector store for the tokens {tokens}...")
-        search_results = await self.chroma_client.search(tokens=tokens)
-        formatted_posts = "\n\n".join(
-            f"- Username: {result.username}\n"
-            f"  Time: {result.datetime}\n"
-            f"  Post URL: {result.tg_url}\n"
-            f"  Content: ```\n{result.document}```\n"
-            for result in search_results.results
-        )
-        logger.debug("Search results: {}".format(formatted_posts[:3]))
-        agent_input = {"tokens": ", ".join(tokens), "input": formatted_posts}
-        out = await self.chain.ainvoke(agent_input)
-        return out
+@function_tool
+async def semantic_search(query: str) -> Dict[str, Any]:
+    """Search across knowledge base to find documents with the information relevant to the user's query.
+    Use it to extract information about latest news
+
+    Args:
+        query: A query in direct form that will fetch information relevant to the user's query.
+            - Use the direct query:
+                * if users asks "What are the available trading courses?" then your query is "trading courses"
+            - Use the language of the query
+    """
+    results = await chroma_client.search(query=query)
+    logger.debug("Semantic search results for `{}`: {}".format(query, json.dumps(results.model_dump(), indent=2, ensure_ascii=False))) # fmt: skip
+    return results.model_dump()
+
+
+agent_web3 = Agent(
+    name="Web3 Agent",
+    instructions="""\
+You are a helpful Web3 assistant that can advertise people activities based on their tokens, \
+dexes and various activities based on your internal knowledge base.
+
+You are going to talk to users about their portfolio and Web3 activities.
+
+Talk in engaging and funny style.
+
+Additional instructions:
+- Always add tg_url as a link to original posts. Put it exactly as specified, like `t.me/user/123`
+- Use quotes from original posts, especially for numbers.
+- If you see some html formatting, change it to normal text.
+
+Note Web3 Terminology:
+- *Farming* is when users to lock their cryptocurrency tokens for a set period to earn rewards for their tokens
+""",
+    model=OpenAIChatCompletionsModel(
+        model=settings.openai_model_name,
+        openai_client=AsyncOpenAI(api_key=settings.openai_api_key),
+    ),
+    tools=[full_text_search, semantic_search],
+    model_settings=ModelSettings(),
+)
+
+
+async def run_agent(agent: Agent, query: str) -> str:
+    result = await Runner.run(agent, query)
+    return result.final_output
+
+
+async def main():
+    import argparse
+
+    parser = argparse.ArgumentParser("Test single query for Web3 Agent")
+    parser.add_argument("-q", "--query", type=str, help="Search query")
+    # parser.add_argument("-ch", "--chroma-host", type=str, default="http://localhost", help="Host for ChromaDB") # fmt: skip
+    parser.add_argument("-d", "--debug", action="store_true", help="Enable debug logging") # fmt: skip
+    args = parser.parse_args()
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
+    with trace(workflow_name="Web3 Agent"):
+        result = await Runner.run(agent_web3, args.query)
+        print("\n\nQUERY: {}".format(args.query))
+        print("OUTPUT:\n", result.final_output)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

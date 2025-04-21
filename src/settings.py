@@ -21,9 +21,9 @@ class ChromaConfig:
 
 
 class LLMConfig:
-    openai_api_key: SecretStr
+    openai_api_key: str
     openai_api_base: str = Field(default="https://api.openai.com/v1")
-    openai_model_name: str = Field(default="gpt-4o-mini")
+    openai_model_name: str = Field(default="gpt-4o")
     openai_temperature: float = Field(default=0.3)
 
 
@@ -38,6 +38,6 @@ settings = ProjectSettings()
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
-    level=logging.INFO,
+    level=settings.log_level,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
