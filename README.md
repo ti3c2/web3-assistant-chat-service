@@ -31,3 +31,6 @@ Token-based chat interaction endpoint.
 1. Set up environment variables using `.env` file
 2. Make sure `web3-assistant-network` Docker network is created
 3. Launch app: `docker-compose up`
+
+### Available CLI
+Test agent with query: `python -m src.agent -q "Are there any trading courses?"`. Run from inside the container.
