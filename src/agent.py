@@ -72,7 +72,9 @@ Note Web3 Terminology:
 """,
     model=OpenAIChatCompletionsModel(
         model=settings.openai_model_name,
-        openai_client=AsyncOpenAI(api_key=settings.openai_api_key),
+        openai_client=AsyncOpenAI(
+            api_key=settings.openai_api_key, base_url=settings.openai_api_base
+        ),
     ),
     tools=[full_text_search, semantic_search],
     model_settings=ModelSettings(),
