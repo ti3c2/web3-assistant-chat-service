@@ -29,8 +29,9 @@ async def full_text_search(tokens: List[str]) -> Dict[str, Any]:
     """Search across knowledge base to find documents with exact matches to the user's assets represented by tokens.
 
     Args:
-        tokens: List of tokens to search for extracted from the user's message. Use all tokens in one query to leverage the bulk api.
+        tokens: List of tokens to search for extracted from the user's message. Use all tokens in one query to leverage the batch api.
     """
+    tokens = [t.strip("$")for t in tokens]
     results = await chroma_client.search(tokens=tokens)
     logger.debug( "Full text search results for tokens {}: {}".format(tokens, json.dumps(results.model_dump(), indent=2, ensure_ascii=False))) # fmt: skip
     return results.model_dump()
